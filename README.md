@@ -98,7 +98,7 @@ O lock `FOR UPDATE` protege a leitura e a atualização do saldo durante todo o 
 
 ```mermaid
 flowchart TD
-    R[POST /clientes/{id}/transacoes] --> V{Bean Validation}
+    R[POST /clientes/:id/transacoes] --> V{Bean Validation}
     V -- inválido --> U[422]
     V -- válido --> K[Nginx extrai id da URI\ne aplica hash consistente]
     K --> Q[ConcurrentLinkedQueue\ndo cliente]
