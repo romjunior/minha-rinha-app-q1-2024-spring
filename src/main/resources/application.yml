@@ -1,0 +1,44 @@
+server:
+  port: ${SPRING_PORT:8080}
+  tomcat:
+    threads:
+      # Keep request workers aligned with the JDBC pool: excess requests wait in the connector queue.
+      max: 12
+      min-spare: 2
+    max-connections: 8192
+    accept-count: 8192
+
+spring:
+  jackson:
+    deserialization:
+      accept-float-as-int: false
+  mvc:
+    logResolvedException: false
+  datasource:
+    url: jdbc:postgresql://${RINHA_DB_ADDRESS:localhost}:5432/${RINHA_DB:rinha}
+    username: ${RINHA_DB_USER:admin}
+    password: ${RINHA_DB_PASSWORD:123}
+    driverClassName: org.postgresql.Driver
+    type: com.zaxxer.hikari.HikariDataSource
+    hikari:
+      connectionTimeout: 25000
+      validationTimeout: 500
+      maxLifetime: 1800000
+      autoCommit: true
+      maximumPoolSize: ${RINHA_DB_MAX_POOL:12}
+      minimumIdle: 2
+      poolName: RinhaTest
+      transactionIsolation: TRANSACTION_READ_COMMITTED
+  data:
+    jdbc:
+      schema: PUBLIC
+
+#logging:
+#  level:
+#    com:
+#      zaxxer:
+#        hikari: debug
+#        jdbc:
+#          core:
+#            JdbcTemplate: DEBUG
+#            StatementCreatorUtils: TRACE
