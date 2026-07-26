@@ -7,8 +7,8 @@ services:
     environment:
       - RINHA_DB_ADDRESS=db
       - RINHA_DB_MAX_POOL=12
-      - RINHA_SERVER_MAX_CONNECTIONS=512
-      - RINHA_SERVER_ACCEPT_COUNT=512
+      - RINHA_SERVER_MAX_CONNECTIONS=1024
+      - RINHA_SERVER_ACCEPT_COUNT=256
 
     # Não é necessário expor qualquer porta além da porta do load balancer,
     # mas é comum as pessoas o fazerem para testarem suas APIs e conectarem
@@ -31,8 +31,8 @@ services:
     environment:
       - RINHA_DB_ADDRESS=db
       - RINHA_DB_MAX_POOL=12
-      - RINHA_SERVER_MAX_CONNECTIONS=512
-      - RINHA_SERVER_ACCEPT_COUNT=512
+      - RINHA_SERVER_MAX_CONNECTIONS=1024
+      - RINHA_SERVER_ACCEPT_COUNT=256
     ports:
       - "8082:8080"
     depends_on:

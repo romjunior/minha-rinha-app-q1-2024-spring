@@ -93,9 +93,12 @@ class SpringDataJdbcConcurrencyTest {
                     prontos.countDown();
                     assertThat(iniciar.await(10, TimeUnit.SECONDS)).isTrue();
                     try {
-                        service.processarTransacao(1, new TransacaoRequest(1, "d", "teste"));
+                        service.processarTransacao(1, new TransacaoRequest(1, "d", "teste")).join();
                         return Situacao.SUCESSO;
-                    } catch (TransacaoService.SaldoInsuficienteException exception) {
+                    } catch (java.util.concurrent.CompletionException exception) {
+                        if (!(exception.getCause() instanceof TransacaoService.SaldoInsuficienteException)) {
+                            throw exception;
+                        }
                         return Situacao.SALDO_INSUFICIENTE;
                     }
                 }));

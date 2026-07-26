@@ -5,8 +5,8 @@ server:
       # Keep request workers aligned with the JDBC pool: excess requests wait in the connector queue.
       max: 12
       min-spare: 2
-    max-connections: ${RINHA_SERVER_MAX_CONNECTIONS:512}
-    accept-count: ${RINHA_SERVER_ACCEPT_COUNT:512}
+    max-connections: ${RINHA_SERVER_MAX_CONNECTIONS:1024}
+    accept-count: ${RINHA_SERVER_ACCEPT_COUNT:256}
 
 spring:
   jackson:
@@ -14,6 +14,8 @@ spring:
       accept-float-as-int: false
   mvc:
     logResolvedException: false
+    async:
+      request-timeout: 44000
   datasource:
     url: jdbc:postgresql://${RINHA_DB_ADDRESS:localhost}:5432/${RINHA_DB:rinha}
     username: ${RINHA_DB_USER:admin}
@@ -39,3 +41,7 @@ rinha:
       max-tentativas: 12
       espera-min-millis: 1
       espera-max-millis: 3
+    lote:
+      tamanho-maximo: 64
+      capacidade-fila-por-cliente: 256
+      janela-coleta-millis: 1

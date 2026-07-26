@@ -4,6 +4,8 @@ import com.rinha.backend.service.TransacaoService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.concurrent.CompletableFuture;
+
 @RestController
 @RequestMapping("/clientes")
 public class TransacaoController {
@@ -15,7 +17,9 @@ public class TransacaoController {
     }
 
     @PostMapping("/{id}/transacoes")
-    public TransacaoResponse criarTransacao(@PathVariable Integer id, @Valid @RequestBody TransacaoRequest request) {
+    public CompletableFuture<TransacaoResponse> criarTransacao(
+        @PathVariable Integer id,
+        @Valid @RequestBody TransacaoRequest request) {
         return transacaoService.processarTransacao(id, request);
     }
 

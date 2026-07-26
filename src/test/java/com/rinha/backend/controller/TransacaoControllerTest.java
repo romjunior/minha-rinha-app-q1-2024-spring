@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -13,6 +14,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -33,11 +35,13 @@ class TransacaoControllerTest {
     @Test
     void aceitaTransacaoValida() throws Exception {
         when(service.processarTransacao(eq(1), any(TransacaoRequest.class)))
-            .thenReturn(new TransacaoResponse(1_000, 100));
+            .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(new TransacaoResponse(1_000, 100)));
 
-        mockMvc.perform(post("/clientes/1/transacoes")
+        MvcResult resultado = mockMvc.perform(post("/clientes/1/transacoes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"valor\":100,\"tipo\":\"c\",\"descricao\":\"pix\"}"))
+            .andReturn();
+        mockMvc.perform(asyncDispatch(resultado))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.limite").value(1_000))
             .andExpect(jsonPath("$.saldo").value(100));
@@ -62,12 +66,15 @@ class TransacaoControllerTest {
 
     @Test
     void retorna503QuandoOsConflitosDeConcorrenciaSeEsgotam() throws Exception {
-        doThrow(new TransacaoService.ConflitoConcorrenciaException())
-            .when(service).processarTransacao(eq(1), any(TransacaoRequest.class));
+        when(service.processarTransacao(eq(1), any(TransacaoRequest.class)))
+            .thenReturn(java.util.concurrent.CompletableFuture.failedFuture(
+                new TransacaoService.ConflitoConcorrenciaException()));
 
-        mockMvc.perform(post("/clientes/1/transacoes")
+        MvcResult resultado = mockMvc.perform(post("/clientes/1/transacoes")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"valor\":100,\"tipo\":\"c\",\"descricao\":\"pix\"}"))
+            .andReturn();
+        mockMvc.perform(asyncDispatch(resultado))
             .andExpect(status().isServiceUnavailable());
     }
 }
