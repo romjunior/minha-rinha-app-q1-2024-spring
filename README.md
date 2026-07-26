@@ -85,7 +85,7 @@ flowchart LR
     T --> L[(transacoes)]
 ```
 
-### Caminho de uma transação
+### Fluxo do `POST /clientes/{id}/transacoes`
 
 ```mermaid
 sequenceDiagram
@@ -100,7 +100,7 @@ sequenceDiagram
     N->>A: URI do cliente com afinidade estável
     A->>A: valida o corpo e consulta cliente no cache
     A->>Q: enfileira comando + CompletableFuture
-    A-->>H: servlet fica assíncrono, thread HTTP é liberada
+    Note over A,H: Servlet permanece assíncrono, thread HTTP é liberada
     W->>Q: coleta até 64 comandos por até 1 ms
     W->>W: processa em ordem e calcula cada saldo em Java
     W->>D: lê saldo uma vez
@@ -114,6 +114,36 @@ sequenceDiagram
 O worker de um cliente processa os comandos na ordem de chegada. Para cada comando, calcula o próximo saldo usando o saldo já calculado para o item anterior. Assim, um débito sem limite é rejeitado com `422`, mas não impede créditos ou outros débitos válidos do mesmo lote. Ao final, há no máximo um `UPDATE` de saldo para o lote e um `INSERT` por lançamento aceito.
 
 Se outra instância gravar o mesmo saldo apesar da afinidade, o `UPDATE ... WHERE version = ?` gerado pelo Spring Data JDBC falha. A transação inteira é desfeita e o lote é reprocessado em uma nova transação, no máximo 12 vezes. Portanto, o `@Version` é a garantia residual de consistência; fila, lote e afinidade são o caminho normal de desempenho.
+
+### Fluxo do `GET /clientes/{id}/extrato`
+
+```mermaid
+sequenceDiagram
+    participant H as Cliente HTTP
+    participant N as Nginx
+    participant A as API Spring
+    participant C as Cache de clientes
+    participant D as PostgreSQL
+
+    H->>N: GET /clientes/{id}/extrato
+    N->>A: encaminha requisição
+    A->>C: busca cliente e limite
+    alt cliente inexistente
+        C-->>A: não encontrado
+        A-->>N: 404
+        N-->>H: 404
+    else cliente encontrado
+        C-->>A: cliente e limite
+        A->>D: lê saldo atual
+        A->>D: lê as 10 últimas transações
+        D-->>A: saldo e histórico
+        A->>A: monta ExtratoResponse em Java
+        A-->>N: 200 com extrato
+        N-->>H: 200 com extrato
+    end
+```
+
+O extrato usa transação somente leitura com isolamento `REPEATABLE_READ`: saldo e histórico são montados a partir de uma visão consistente, sem entrar na fila de escrita dos lotes.
 
 ```mermaid
 erDiagram
