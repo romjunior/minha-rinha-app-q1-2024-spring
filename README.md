@@ -22,7 +22,7 @@ flowchart LR
 | Componente | Responsabilidade |
 |---|---|
 | Nginx | Ponto público, balanceamento entre as duas instâncias e conexões persistentes ao upstream. |
-| APIs | Validação HTTP, regras de negócio, mapeamento de erros e execução das operações SQL. |
+| APIs | Validação HTTP, regras de negócio, optimistic locking e persistência via Spring Data JDBC. |
 | PostgreSQL | Fonte de verdade para clientes, saldo corrente e histórico de transações. |
 
 O `docker-compose.yml` mantém o orçamento total da Rinha: **1,5 CPU** e **525 MB**.
@@ -56,6 +56,7 @@ Respostas:
 | `200` | Transação registrada; devolve `limite` e `saldo`. |
 | `404` | Cliente inexistente. |
 | `422` | Corpo inválido ou débito que ultrapassa o limite. |
+| `503` | Os conflitos concorrentes excederam o limite de retries. |
 
 ### `GET /clientes/{id}/extrato`
 
@@ -63,7 +64,7 @@ Retorna saldo, limite, horário do extrato e as últimas dez transações do cli
 
 ## Consistência em concorrência
 
-Uma transação é processada por uma única instrução SQL: atualiza o saldo apenas quando o limite permite, insere o lançamento somente se a atualização ocorreu e devolve o estado final.
+Cada transação é processada por uma tentativa curta do Spring Data JDBC: a API lê o cliente cacheado e o saldo, valida o limite em Java, atualiza o saldo com optimistic locking e registra o lançamento na mesma transação. O Nginx mantém as transações de um cliente na mesma API, que as serializa localmente; um conflito de versão permanece como proteção residual e é repetido em uma nova transação.
 
 ```mermaid
 sequenceDiagram
@@ -73,21 +74,28 @@ sequenceDiagram
 
     H->>A: POST /clientes/{id}/transacoes
     A->>A: valida valor, tipo e descrição
-    A->>D: UPDATE saldo condicionado + INSERT em CTE
-    Note over D: Lock da linha de saldo por cliente<br/>e reavaliação da condição após a espera
+    N->>A: roteia a URI do cliente de forma estável
+    A->>A: serializa operações do mesmo cliente
+    A->>D: carrega saldo e cliente cacheado
+    A->>A: calcula e valida o novo saldo
+    A->>D: UPDATE saldo WHERE version = versão lida + INSERT transação
+    Note over A,D: Conflito de versão desfaz a tentativa<br/>e a API repete com dados atuais
     alt cliente inexistente
         D-->>A: CLIENTE_NAO_ENCONTRADO
         A-->>H: 404
     else limite insuficiente
         D-->>A: SALDO_INSUFICIENTE
         A-->>H: 422
+    else conflito de versão
+        D-->>A: OptimisticLockingFailureException
+        A->>A: espera aleatória curta e repete
     else operação aceita
         D-->>A: saldo e limite atualizados
         A-->>H: 200
     end
 ```
 
-O predicado do débito usa o valor da linha que está sendo atualizada. Isso é essencial: quando uma sessão espera o lock de `saldos`, o PostgreSQL reavalia a condição com o saldo mais recente, evitando que débitos concorrentes ultrapassem o limite.
+O campo `version` de `saldos` é atualizado a cada gravação. Somente uma tentativa que leu uma versão pode atualizá-la; as demais recebem conflito, relêem o saldo e validam novamente o limite. A afinidade de cliente no Nginx e os locks em stripes evitam esses conflitos no caminho normal, mantendo o optimistic locking como garantia entre processos.
 
 ```mermaid
 erDiagram
@@ -103,6 +111,7 @@ erDiagram
         int id PK
         int cliente_id UK
         int valor
+        bigint version
     }
     TRANSACOES {
         int id PK
@@ -167,13 +176,13 @@ Elevar indiscriminadamente o HikariCP de 12 para 16 conexões por API criou mais
 
 O teste concentra operações em apenas cinco clientes. Escritas para um mesmo cliente precisam ser serializadas para manter o saldo correto; portanto, adicionar conexões não remove essa dependência. Quando a taxa de chegada supera a capacidade de processar essas filas, a latência cresce junto com o número de usuários ativos.
 
-### Backpressure é preferível a falhas prematuras
+### Backpressure precisa respeitar a memória
 
-O Tomcat aceita conexões em fila e o Nginx mantém timeouts compatíveis com a carga. Isso evitou que uma fila temporária se transformasse imediatamente em `500`, `504` ou erro de aquisição de conexão. A contrapartida é que fila excessiva aumenta a latência; por isso, capacidade sustentável continua sendo a métrica principal.
+O Tomcat limita as conexões e a fila de aceitação a 512 por API. Isso impede que milhares de requisições pendentes consumam todo o orçamento de memória; capacidade sustentável continua sendo a métrica principal.
 
 ### A transação deve ser atômica e curta
 
-A atualização do saldo e o `INSERT` no histórico estão na mesma operação SQL e na mesma transação Spring. Não há leitura e escrita separadas na aplicação que possam sofrer condição de corrida. O índice `(cliente_id, realizada_em DESC, id DESC)` mantém o extrato das últimas dez transações eficiente.
+A atualização do saldo e o `INSERT` no histórico ocorrem na mesma transação Spring. O `@Version` impede que duas tentativas gravem a partir do mesmo saldo; o coordenador de retries abre uma nova transação após cada conflito. O índice `(cliente_id, realizada_em DESC, id DESC)` mantém o extrato das últimas dez transações eficiente.
 
 ### Ajustes de PostgreSQL devem respeitar o orçamento
 
@@ -181,7 +190,7 @@ O banco usa buffers e memória de trabalho modestos, número máximo de conexõe
 
 ### Próximos experimentos
 
-Para reduzir a parcela acima de 800 ms, a primeira experiência recomendada é redistribuir CPU das APIs para o PostgreSQL, sem ultrapassar 1,5 CPU no total. Ganhos maiores exigirão mudança arquitetural, como roteamento estável por cliente e fila/batching por cliente, sempre mantendo a ordem e a atomicidade das operações.
+Para reduzir ainda mais a parcela acima de 800 ms, o próximo experimento é batching por cliente: um worker por stripe pode calcular vários lançamentos em Java e persistir o conjunto em uma transação curta, sempre mantendo a ordem e a atomicidade das operações.
 
 ## Licença
 

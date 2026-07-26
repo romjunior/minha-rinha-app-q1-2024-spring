@@ -1,10 +1,16 @@
 package com.rinha.backend.repository;
 
+import com.rinha.backend.MinhaRinhaAppQ12024Application;
+import com.rinha.backend.controller.TransacaoRequest;
+import com.rinha.backend.service.TransacaoService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.aot.DisabledInAotMode;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
-import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -19,37 +25,47 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@SpringBootTest(classes = MinhaRinhaAppQ12024Application.class)
 @Testcontainers(disabledWithoutDocker = true)
-class JdbcRinhaRepositoryConcurrencyTest {
+@DisabledInAotMode
+class SpringDataJdbcConcurrencyTest {
 
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16.11-bookworm");
 
+    @Autowired
     private JdbcTemplate jdbc;
-    private RinhaRepository repository;
+
+    @Autowired
+    private TransacaoService service;
+
+    @DynamicPropertySource
+    static void configuraDatasource(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+    }
 
     @BeforeEach
     void preparaClienteComLimiteDeCemCentavos() {
-        DriverManagerDataSource dataSource = new DriverManagerDataSource(
-            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
-        jdbc = new JdbcTemplate(dataSource);
-        repository = new JdbcRinhaRepository(new NamedParameterJdbcTemplate(dataSource));
+        jdbc.execute("DROP TABLE IF EXISTS transacoes, saldos, clientes CASCADE");
         jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS clientes (
+            CREATE TABLE clientes (
                 id INTEGER PRIMARY KEY,
                 nome VARCHAR(50) NOT NULL,
                 limite INTEGER NOT NULL
             )
             """);
         jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS saldos (
+            CREATE TABLE saldos (
                 id SERIAL PRIMARY KEY,
                 cliente_id INTEGER NOT NULL UNIQUE REFERENCES clientes(id),
-                valor INTEGER NOT NULL
+                valor INTEGER NOT NULL,
+                version BIGINT NOT NULL DEFAULT 0
             )
             """);
         jdbc.execute("""
-            CREATE TABLE IF NOT EXISTS transacoes (
+            CREATE TABLE transacoes (
                 id SERIAL PRIMARY KEY,
                 cliente_id INTEGER NOT NULL REFERENCES clientes(id),
                 valor INTEGER NOT NULL,
@@ -58,7 +74,6 @@ class JdbcRinhaRepositoryConcurrencyTest {
                 realizada_em TIMESTAMP WITH TIME ZONE NOT NULL
             )
             """);
-        jdbc.execute("TRUNCATE transacoes, saldos, clientes RESTART IDENTITY CASCADE");
         jdbc.update("INSERT INTO clientes (id, nome, limite) VALUES (1, 'cliente', 100)");
         jdbc.update("INSERT INTO saldos (cliente_id, valor) VALUES (1, 0)");
     }
@@ -72,31 +87,30 @@ class JdbcRinhaRepositoryConcurrencyTest {
         ExecutorService executor = Executors.newFixedThreadPool(concorrencia);
 
         try {
-            List<Future<RinhaRepository.ResultadoTransacao>> futuros = new ArrayList<>();
+            List<Future<Situacao>> futuros = new ArrayList<>();
             for (int i = 0; i < requisicoes; i++) {
                 futuros.add(executor.submit(() -> {
                     prontos.countDown();
                     assertThat(iniciar.await(10, TimeUnit.SECONDS)).isTrue();
-                    return repository.registrarTransacao(1, 1, "d", "teste");
+                    try {
+                        service.processarTransacao(1, new TransacaoRequest(1, "d", "teste"));
+                        return Situacao.SUCESSO;
+                    } catch (TransacaoService.SaldoInsuficienteException exception) {
+                        return Situacao.SALDO_INSUFICIENTE;
+                    }
                 }));
             }
 
             assertThat(prontos.await(10, TimeUnit.SECONDS)).isTrue();
             iniciar.countDown();
 
-            List<RinhaRepository.ResultadoTransacao> resultados = new ArrayList<>();
-            for (Future<RinhaRepository.ResultadoTransacao> futuro : futuros) {
-                resultados.add(futuro.get(15, TimeUnit.SECONDS));
+            List<Situacao> resultados = new ArrayList<>();
+            for (Future<Situacao> futuro : futuros) {
+                resultados.add(futuro.get(30, TimeUnit.SECONDS));
             }
 
-            assertThat(resultados)
-                .extracting(RinhaRepository.ResultadoTransacao::situacao)
-                .containsOnly(RinhaRepository.SituacaoTransacao.SUCESSO,
-                    RinhaRepository.SituacaoTransacao.SALDO_INSUFICIENTE);
-            assertThat(resultados)
-                .extracting(RinhaRepository.ResultadoTransacao::situacao)
-                .filteredOn(RinhaRepository.SituacaoTransacao.SUCESSO::equals)
-                .hasSize(100);
+            assertThat(resultados).containsOnly(Situacao.SUCESSO, Situacao.SALDO_INSUFICIENTE);
+            assertThat(resultados).filteredOn(Situacao.SUCESSO::equals).hasSize(100);
             assertThat(jdbc.queryForObject("SELECT valor FROM saldos WHERE cliente_id = 1", Integer.class))
                 .isEqualTo(-100);
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM transacoes WHERE cliente_id = 1", Integer.class))
@@ -104,5 +118,10 @@ class JdbcRinhaRepositoryConcurrencyTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    private enum Situacao {
+        SUCESSO,
+        SALDO_INSUFICIENTE
     }
 }

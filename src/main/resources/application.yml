@@ -5,8 +5,8 @@ server:
       # Keep request workers aligned with the JDBC pool: excess requests wait in the connector queue.
       max: 12
       min-spare: 2
-    max-connections: 8192
-    accept-count: 8192
+    max-connections: ${RINHA_SERVER_MAX_CONNECTIONS:512}
+    accept-count: ${RINHA_SERVER_ACCEPT_COUNT:512}
 
 spring:
   jackson:
@@ -33,12 +33,9 @@ spring:
     jdbc:
       schema: PUBLIC
 
-#logging:
-#  level:
-#    com:
-#      zaxxer:
-#        hikari: debug
-#        jdbc:
-#          core:
-#            JdbcTemplate: DEBUG
-#            StatementCreatorUtils: TRACE
+rinha:
+  transacao:
+    retry:
+      max-tentativas: 12
+      espera-min-millis: 1
+      espera-max-millis: 3

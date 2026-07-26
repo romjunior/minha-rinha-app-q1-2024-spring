@@ -1,6 +1,7 @@
 package com.rinha.backend.controller;
 
 import com.rinha.backend.service.TransacaoService.ClienteNaoEncontradoException;
+import com.rinha.backend.service.TransacaoService.ConflitoConcorrenciaException;
 import com.rinha.backend.service.TransacaoService.SaldoInsuficienteException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -20,5 +21,10 @@ public class ApiExceptionHandler {
     @ExceptionHandler({SaldoInsuficienteException.class, MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
     ResponseEntity<Void> requisicaoInvalida() {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).build();
+    }
+
+    @ExceptionHandler(ConflitoConcorrenciaException.class)
+    ResponseEntity<Void> conflitoDeConcorrencia() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
     }
 }

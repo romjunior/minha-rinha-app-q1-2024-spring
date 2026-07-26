@@ -59,4 +59,15 @@ class TransacaoControllerTest {
         mockMvc.perform(get("/clientes/6/extrato"))
             .andExpect(status().isNotFound());
     }
+
+    @Test
+    void retorna503QuandoOsConflitosDeConcorrenciaSeEsgotam() throws Exception {
+        doThrow(new TransacaoService.ConflitoConcorrenciaException())
+            .when(service).processarTransacao(eq(1), any(TransacaoRequest.class));
+
+        mockMvc.perform(post("/clientes/1/transacoes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"valor\":100,\"tipo\":\"c\",\"descricao\":\"pix\"}"))
+            .andExpect(status().isServiceUnavailable());
+    }
 }

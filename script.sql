@@ -19,6 +19,7 @@ CREATE TABLE saldos (
 	id SERIAL PRIMARY KEY,
 	cliente_id INTEGER NOT NULL,
 	valor INTEGER NOT NULL,
+	version BIGINT NOT NULL DEFAULT 0,
 	CONSTRAINT fk_clientes_saldos_id
 		FOREIGN KEY (cliente_id) REFERENCES clientes(id),
 	CONSTRAINT uk_saldos_cliente UNIQUE (cliente_id)
