@@ -100,7 +100,7 @@ sequenceDiagram
     N->>A: URI do cliente com afinidade estável
     A->>A: valida o corpo e consulta cliente no cache
     A->>Q: enfileira comando + CompletableFuture
-    A-->>H: servlet fica assíncrono; thread HTTP é liberada
+    A-->>H: servlet fica assíncrono, thread HTTP é liberada
     W->>Q: coleta até 64 comandos por até 1 ms
     W->>W: processa em ordem e calcula cada saldo em Java
     W->>D: lê saldo uma vez
