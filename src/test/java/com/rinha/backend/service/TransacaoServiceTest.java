@@ -17,11 +17,12 @@ import static org.mockito.Mockito.when;
 class TransacaoServiceTest {
 
     private final RinhaRepository repository = mock(RinhaRepository.class);
-    private final TransacaoService service = new TransacaoService(repository);
+    private final BatchingTransacaoProcessor transacaoProcessor = mock(BatchingTransacaoProcessor.class);
+    private final TransacaoService service = new TransacaoService(repository, transacaoProcessor);
 
     @Test
     void retornaSaldoELimiteQuandoTransacaoERegistrada() {
-        when(repository.registrarTransacao(1, 100, "c", "pix"))
+        when(transacaoProcessor.processar(1, 100, "c", "pix"))
             .thenReturn(new RinhaRepository.ResultadoTransacao(
                 RinhaRepository.SituacaoTransacao.SUCESSO, 100, 1_000));
 
@@ -33,7 +34,7 @@ class TransacaoServiceTest {
 
     @Test
     void diferenciaClienteInexistenteDeSaldoInsuficiente() {
-        when(repository.registrarTransacao(6, 100, "d", "pix"))
+        when(transacaoProcessor.processar(6, 100, "d", "pix"))
             .thenReturn(RinhaRepository.ResultadoTransacao.clienteNaoEncontrado());
 
         assertThatThrownBy(() -> service.processarTransacao(6, new TransacaoRequest(100, "d", "pix")))
@@ -42,7 +43,7 @@ class TransacaoServiceTest {
 
     @Test
     void rejeitaDebitoQueExcedeOLimite() {
-        when(repository.registrarTransacao(1, 101, "d", "pix"))
+        when(transacaoProcessor.processar(1, 101, "d", "pix"))
             .thenReturn(RinhaRepository.ResultadoTransacao.saldoInsuficiente());
 
         assertThatThrownBy(() -> service.processarTransacao(1, new TransacaoRequest(101, "d", "pix")))

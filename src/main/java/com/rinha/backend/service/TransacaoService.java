@@ -5,7 +5,6 @@ import com.rinha.backend.controller.TransacaoRequest;
 import com.rinha.backend.controller.TransacaoResponse;
 import com.rinha.backend.repository.RinhaRepository;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 
@@ -13,14 +12,15 @@ import java.time.Instant;
 public class TransacaoService {
 
     private final RinhaRepository repository;
+    private final BatchingTransacaoProcessor transacaoProcessor;
 
-    public TransacaoService(RinhaRepository repository) {
+    public TransacaoService(RinhaRepository repository, BatchingTransacaoProcessor transacaoProcessor) {
         this.repository = repository;
+        this.transacaoProcessor = transacaoProcessor;
     }
 
-    @Transactional
     public TransacaoResponse processarTransacao(Integer clienteId, TransacaoRequest request) {
-        RinhaRepository.ResultadoTransacao transacao = repository.registrarTransacao(
+        RinhaRepository.ResultadoTransacao transacao = transacaoProcessor.processar(
             clienteId, request.valor(), request.tipo(), request.descricao());
 
         if (transacao.situacao() == RinhaRepository.SituacaoTransacao.CLIENTE_NAO_ENCONTRADO) {
@@ -32,7 +32,6 @@ public class TransacaoService {
         return new TransacaoResponse(transacao.limite(), transacao.saldo());
     }
 
-    @Transactional(readOnly = true)
     public ExtratoResponse obterExtrato(Integer clienteId) {
         RinhaRepository.Extrato extrato = repository.buscarExtrato(clienteId)
             .orElseThrow(ClienteNaoEncontradoException::new);

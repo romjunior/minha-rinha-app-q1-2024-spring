@@ -77,7 +77,8 @@ class JdbcRinhaRepositoryConcurrencyTest {
                 futuros.add(executor.submit(() -> {
                     prontos.countDown();
                     assertThat(iniciar.await(10, TimeUnit.SECONDS)).isTrue();
-                    return repository.registrarTransacao(1, 1, "d", "teste");
+                    return repository.registrarLote(1,
+                        List.of(new RinhaRepository.TransacaoPendente(1, "d", "teste"))).getFirst();
                 }));
             }
 
@@ -104,5 +105,37 @@ class JdbcRinhaRepositoryConcurrencyTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void processaLoteEmOrdemEPersisteSomenteTransacoesAprovadas() {
+        List<RinhaRepository.ResultadoTransacao> resultados = repository.registrarLote(1, List.of(
+            new RinhaRepository.TransacaoPendente(60, "d", "primeiro"),
+            new RinhaRepository.TransacaoPendente(50, "d", "recusado"),
+            new RinhaRepository.TransacaoPendente(30, "c", "credito"),
+            new RinhaRepository.TransacaoPendente(50, "d", "ultimo")
+        ));
+
+        assertThat(resultados)
+            .extracting(RinhaRepository.ResultadoTransacao::situacao)
+            .containsExactly(
+                RinhaRepository.SituacaoTransacao.SUCESSO,
+                RinhaRepository.SituacaoTransacao.SALDO_INSUFICIENTE,
+                RinhaRepository.SituacaoTransacao.SUCESSO,
+                RinhaRepository.SituacaoTransacao.SUCESSO);
+        assertThat(jdbc.queryForObject("SELECT valor FROM saldos WHERE cliente_id = 1", Integer.class))
+            .isEqualTo(-80);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM transacoes WHERE cliente_id = 1", Integer.class))
+            .isEqualTo(3);
+    }
+
+    @Test
+    void operacaoIndividualAtomicaPermaneceDisponivel() {
+        RinhaRepository.ResultadoTransacao resultado = repository.registrarTransacao(1, 40, "c", "pix");
+
+        assertThat(resultado.situacao()).isEqualTo(RinhaRepository.SituacaoTransacao.SUCESSO);
+        assertThat(resultado.saldo()).isEqualTo(40);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM transacoes WHERE cliente_id = 1", Integer.class))
+            .isEqualTo(1);
     }
 }

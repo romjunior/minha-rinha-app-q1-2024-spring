@@ -27,6 +27,10 @@ CREATE TABLE saldos (
 CREATE INDEX idx_transacoes_cliente_data
 	ON transacoes (cliente_id, realizada_em DESC, id DESC);
 
+-- IDs do histórico não precisam ser sequenciais. Um cache maior evita uma
+-- atualização da sequência para cada transação durante picos de escrita.
+ALTER SEQUENCE transacoes_id_seq CACHE 1000;
+
 DO $$
 BEGIN
 	INSERT INTO clientes (nome, limite)

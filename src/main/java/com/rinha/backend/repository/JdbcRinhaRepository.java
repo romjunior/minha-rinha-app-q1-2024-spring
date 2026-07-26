@@ -2,9 +2,12 @@ package com.rinha.backend.repository;
 
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -25,7 +28,6 @@ class JdbcRinhaRepository implements RinhaRepository {
             INSERT INTO transacoes (cliente_id, valor, tipo, descricao, realizada_em)
             SELECT :clienteId, :valor, :tipo, :descricao, CURRENT_TIMESTAMP
             FROM atualizado
-            RETURNING id
         )
         SELECT
             CASE
@@ -38,7 +40,6 @@ class JdbcRinhaRepository implements RinhaRepository {
         FROM (SELECT 1) base
         LEFT JOIN clientes c ON c.id = :clienteId
         LEFT JOIN atualizado a ON TRUE
-        LEFT JOIN inserido i ON TRUE
         """;
 
     private static final String EXTRATO_SQL = """
@@ -56,10 +57,32 @@ class JdbcRinhaRepository implements RinhaRepository {
         WHERE c.id = :clienteId
         """;
 
+    private static final String BUSCAR_SALDO_PARA_LOTE_SQL = """
+        SELECT s.valor AS saldo, c.limite
+        FROM clientes c
+        JOIN saldos s ON s.cliente_id = c.id
+        WHERE c.id = :clienteId
+        FOR UPDATE OF s
+        """;
+
+    private static final String ATUALIZAR_SALDO_SQL = """
+        UPDATE saldos
+        SET valor = :saldo
+        WHERE cliente_id = :clienteId
+        """;
+
+    private static final String INSERIR_TRANSACAO_SQL = """
+        INSERT INTO transacoes (cliente_id, valor, tipo, descricao, realizada_em)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """;
+
     private final NamedParameterJdbcTemplate jdbc;
+    private final TransactionTemplate transactionTemplate;
 
     JdbcRinhaRepository(NamedParameterJdbcTemplate jdbc) {
         this.jdbc = jdbc;
+        this.transactionTemplate = new TransactionTemplate(
+            new DataSourceTransactionManager(jdbc.getJdbcTemplate().getDataSource()));
     }
 
     @Override
@@ -69,6 +92,11 @@ class JdbcRinhaRepository implements RinhaRepository {
                 SituacaoTransacao.valueOf(rs.getString("situacao")),
                 rs.getObject("saldo", Integer.class),
                 rs.getObject("limite", Integer.class)));
+    }
+
+    @Override
+    public List<ResultadoTransacao> registrarLote(int clienteId, List<TransacaoPendente> transacoes) {
+        return transactionTemplate.execute(status -> registrarLoteNaTransacao(clienteId, transacoes));
     }
 
     @Override
@@ -106,6 +134,47 @@ class JdbcRinhaRepository implements RinhaRepository {
             .addValue("descricao", descricao);
     }
 
+    private List<ResultadoTransacao> registrarLoteNaTransacao(int clienteId, List<TransacaoPendente> transacoes) {
+        Optional<EstadoSaldo> estado = jdbc.query(BUSCAR_SALDO_PARA_LOTE_SQL, parametros(clienteId),
+                (rs, rowNum) -> new EstadoSaldo(rs.getInt("saldo"), rs.getInt("limite")))
+            .stream()
+            .findFirst();
+
+        if (estado.isEmpty()) {
+            return transacoes.stream().map(ignored -> ResultadoTransacao.clienteNaoEncontrado()).toList();
+        }
+
+        int saldo = estado.get().saldo();
+        int limite = estado.get().limite();
+        List<ResultadoTransacao> resultados = new ArrayList<>(transacoes.size());
+        List<TransacaoPendente> aprovadas = new ArrayList<>(transacoes.size());
+
+        for (TransacaoPendente transacao : transacoes) {
+            if ("d".equals(transacao.tipo()) && saldo - transacao.valor() < -limite) {
+                resultados.add(ResultadoTransacao.saldoInsuficiente());
+                continue;
+            }
+
+            saldo += "c".equals(transacao.tipo()) ? transacao.valor() : -transacao.valor();
+            aprovadas.add(transacao);
+            resultados.add(new ResultadoTransacao(SituacaoTransacao.SUCESSO, saldo, limite));
+        }
+
+        if (aprovadas.isEmpty()) {
+            return resultados;
+        }
+
+        jdbc.update(ATUALIZAR_SALDO_SQL, parametros(clienteId).addValue("saldo", saldo));
+        jdbc.getJdbcTemplate().batchUpdate(INSERIR_TRANSACAO_SQL, aprovadas, aprovadas.size(),
+            (statement, transacao) -> {
+                statement.setInt(1, clienteId);
+                statement.setInt(2, transacao.valor());
+                statement.setString(3, transacao.tipo());
+                statement.setString(4, transacao.descricao());
+            });
+        return resultados;
+    }
+
     private record ExtratoRow(
         int saldo,
         int limite,
@@ -113,5 +182,8 @@ class JdbcRinhaRepository implements RinhaRepository {
         String tipo,
         String descricao,
         OffsetDateTime realizadaEm) {
+    }
+
+    private record EstadoSaldo(int saldo, int limite) {
     }
 }

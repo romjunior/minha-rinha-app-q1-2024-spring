@@ -13,7 +13,12 @@ public interface RinhaRepository {
     ResultadoTransacao registrarTransacao(
         int clienteId, int valor, String tipo, String descricao);
 
+    List<ResultadoTransacao> registrarLote(int clienteId, List<TransacaoPendente> transacoes);
+
     Optional<Extrato> buscarExtrato(int clienteId);
+
+    record TransacaoPendente(int valor, String tipo, String descricao) {
+    }
 
     record ResultadoTransacao(SituacaoTransacao situacao, Integer saldo, Integer limite) {
         public static ResultadoTransacao clienteNaoEncontrado() {

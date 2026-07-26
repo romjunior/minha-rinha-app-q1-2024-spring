@@ -19,7 +19,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.46"
+          # The database performs the serialized balance updates; reserve more CPU for it.
+          cpus: "0.36"
           memory: "125MB"
 
   api02:
@@ -80,6 +81,8 @@ services:
       - effective_cache_size=64MB
       - -c
       - synchronous_commit=off
+      - -c
+      - jit=off
     healthcheck:
       test: ["CMD-SHELL", "psql -U admin -d rinha -tAc 'SELECT 1 FROM clientes LIMIT 1' | grep -q 1"]
       interval: 2s
@@ -89,7 +92,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.40"
+          cpus: "0.60"
           memory: "125MB"
 
 # O uso do modo `bridge` deve ser adequado à carga que será usada no teste.
